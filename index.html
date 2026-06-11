@@ -235,7 +235,7 @@ async function openBidSheet(i) {
   bidCtx = null;
   $('sh-title').textContent = pending.name + '.gram';
   $('sh-sub').textContent = 'Проверяю текущую ставку…';
-  $('sh-note').innerHTML = FEE_NOTE;
+  $('sh-note').innerHTML = 'Спишется: <b>ставка GRM</b> (без комиссии) и <b>~1.35 TON</b> (1.25 TON — залог, излишек вернётся). Если тебя перебьют — GRM вернутся на кошелёк.';
   $('sh-amt').value = nextBidGram(pending.bid);
   $('sh-go').textContent = 'Перебить';
   showSheet();
@@ -342,13 +342,17 @@ async function confirmBid() {
   const btn = $('sh-go'); btn.disabled = true; btn.textContent = 'Готовлю транзакцию…';
   try {
     const { jw, balance } = await grmWalletOf(tcui.account.address);
-    if (balance && balance < amt + FEE_GRM) { err.textContent = `Нужно ${(amt + FEE_GRM).toLocaleString('ru')} GRM (ставка + комиссия), на кошельке ${balance.toLocaleString('ru')}`; return; }
-    // ставка = GRM на контракт домена, forward-комментарий = имя домена (как на dns.gramcoin.org)
+    if (balance && balance < amt) { err.textContent = `На кошельке ${balance.toLocaleString('ru')} GRM — не хватает`; return; }
+    // ставка = GRM на контракт домена, forward-комментарий = имя домена (как на dns.gramcoin.org); без комиссии сервиса
     const fwd = new TonWeb.boc.Cell();
     fwd.bits.writeUint(0, 32);
     fwd.bits.writeString(pending.name);
     const bidBody = buildJettonTransfer(amtNano, pending.address, fwd);
-    await submitWithFee(jw, bidBody);
+    const jwFriendly = new TonWeb.utils.Address(jw).toString(true, true, true);
+    await tcui.sendTransaction({
+      validUntil: Math.floor(Date.now() / 1000) + 300,
+      messages: [{ address: jwFriendly, amount: TOTAL_TON, payload: TonWeb.utils.bytesToBase64(await bidBody.toBoc(false)) }],
+    });
     const row = D.auctions.find((r) => r.address === pending.address);
     if (row) {
       row.bid = amt; row.bidder = tcui.account.address;
