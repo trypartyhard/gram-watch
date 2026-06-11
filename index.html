@@ -165,8 +165,7 @@ function render() {
       badge = `<span class="badge d-yel">осталось ${-daysFrom(r.expiry)} дн.</span>`;
       meta = `истекает ${fmt(r.expiry)} · владелец <a href="https://tonviewer.com/${r.owner}" target="_blank">${short(r.owner)}</a>`;
     } else if (tab === 'auctions') {
-      const left = r.end - D.scannedAt;
-      badge = `<span class="badge d-acc">${left > 86400 ? Math.floor(left / 86400) + ' дн.' : Math.max(1, Math.floor(left / 3600)) + ' ч.'} до конца</span>`;
+      badge = `<span class="badge d-acc" data-end="${r.end}"></span>`;
       meta = `ставка <b>${r.bid.toLocaleString('ru')} GRM</b> · лидер <a href="https://tonviewer.com/${r.bidder}" target="_blank">${short(r.bidder)}</a> · до ${new Date(r.end * 1000).toLocaleString('ru')}`;
     } else {
       badge = `<span class="badge d-grn">ждёт доставки</span>`;
@@ -179,7 +178,26 @@ function render() {
   $('list').innerHTML = (html || '<div class="empty">ничего не найдено</div>') +
     (total > shown ? `<button class="more" onclick="shown+=200;render()">показать ещё (${total - shown})</button>` : '');
   window._rows = rows;
+  tickCountdowns();
 }
+
+// живой обратный отсчёт на вкладке аукционов
+function fmtLeft(s) {
+  if (s <= 0) return 'завершён';
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}д ${h}ч до конца`;
+  if (h > 0) return `${h}ч ${m}м до конца`;
+  return `${m}м ${s % 60}с до конца`;
+}
+function tickCountdowns() {
+  const now = Math.floor(Date.now() / 1000);
+  document.querySelectorAll('[data-end]').forEach((el) => {
+    const left = Number(el.dataset.end) - now;
+    el.textContent = fmtLeft(left);
+    if (left <= 0) el.classList.replace('d-acc', 'd-grn');
+  });
+}
+setInterval(tickCountdowns, 1000);
 function setTab(k) { tab = k; shown = 120; render(); window.scrollTo(0, 0); }
 $('q').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); shown = 120; render(); });
 $('sort').addEventListener('change', (e) => { sortMode = e.target.value; shown = 120; render(); });
@@ -283,7 +301,13 @@ async function confirmStart() {
         { address: jwFriendly, amount: FEE_MSG_TON, payload: TonWeb.utils.bytesToBase64(await feeBody.toBoc(false)) },
       ],
     });
+    // оптимистично: домен сразу переезжает из «Истёкших» в «Аукционы»
+    const idx = D.expired.indexOf(pending);
+    if (idx >= 0) D.expired.splice(idx, 1);
+    D.auctions.unshift({ ...pending, bid: amt, bidder: tcui.account.address, end: Math.floor(Date.now() / 1000) + 7 * 86400 });
+    setTimeout(liveRefreshAuctions, 20000); // подтянуть реальное состояние из сети
     closeSheet();
+    render();
     toast('✅ Отправлено! Аукцион появится после подтверждения сети (~1 мин)', 5000);
   } catch (e) {
     err.textContent = e && e.message && e.message.includes('User') ? 'Отменено в кошельке' : 'Ошибка: ' + (e.message || e);
@@ -292,12 +316,82 @@ async function confirmStart() {
   }
 }
 
+// ---------- живое обновление аукционов (каждые 90 c, прямо из блокчейна) ----------
+function cellReader(cell) {
+  let p = 0; const bs = cell.bits;
+  return {
+    u(n) { let v = 0n; for (let i = 0; i < n; i++) v = (v << 1n) | (bs.get(p++) ? 1n : 0n); return Number(v); },
+    skipAddr() { const t = this.u(2); if (t === 2) { this.u(265); } return t; },
+  };
+}
+function parseItemLive(b64) {
+  const cell = TonWeb.boc.Cell.oneFromBoc(TonWeb.utils.base64ToBytes(b64));
+  const r = cellReader(cell);
+  r.u(256); r.skipAddr();
+  const hasOwner = r.skipAddr() === 2;
+  const hasAuction = r.u(1) === 1;
+  const lastFillUp = r.u(64);
+  let auction = null;
+  if (hasAuction) {
+    const a = cellReader(cell.refs[2]);
+    a.skipAddr();
+    const bid = a.u(a.u(4) * 8) / 1e9;
+    auction = { bid, end: a.u(64) };
+  }
+  return { hasOwner, lastFillUp, auction };
+}
+
+let liveBusy = false;
+async function liveRefreshAuctions() {
+  if (!D || liveBusy) return;
+  liveBusy = true;
+  try {
+    const targets = [...D.auctions, ...D.stuck];
+    if (!targets.length) return;
+    const states = {};
+    for (let i = 0; i < targets.length; i += 100) {
+      const chunk = targets.slice(i, i + 100);
+      try {
+        const j = await (await fetch(`https://toncenter.com/api/v3/accountStates?address=${chunk.map((t) => t.address).join(',')}&include_boc=true&limit=100`)).json();
+        for (const acc of j.accounts || []) states[acc.address.toLowerCase()] = acc;
+      } catch (e) {}
+      if (i + 100 < targets.length) await sleep(1200);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const auctions = [], stuck = [];
+    let changed = false;
+    for (const t of targets) {
+      const raw = new TonWeb.utils.Address(t.address).toString(false).toLowerCase();
+      const acc = states[raw];
+      if (!acc || !acc.data_boc) { (t.end > now ? auctions : stuck).push(t); continue; }
+      let p;
+      try { p = parseItemLive(acc.data_boc); } catch (e) { (t.end > now ? auctions : stuck).push(t); continue; }
+      if (p.auction) {
+        if (p.auction.bid !== t.bid || p.auction.end !== t.end) changed = true;
+        const u = { ...t, bid: p.auction.bid, end: p.auction.end };
+        (u.end > now ? auctions : stuck).push(u);
+      } else {
+        changed = true; // аукцион исчез: домен доставлен победителю или продлён
+      }
+    }
+    if (changed || auctions.length !== D.auctions.length || stuck.length !== D.stuck.length) {
+      auctions.sort((a, b) => a.end - b.end);
+      D.auctions = auctions; D.stuck = stuck;
+      if (tab === 'auctions' || tab === 'stuck') render(); else if (D) render();
+    }
+  } finally {
+    liveBusy = false;
+  }
+}
+setInterval(liveRefreshAuctions, 90000);
+
 // ---------- данные ----------
 fetch('data.json?t=' + Math.floor(Date.now() / 600000)).then((r) => r.json()).then((d) => {
   D = d;
-  const age = Math.floor((Date.now() / 1000 - d.scannedAt) / 3600);
-  $('scanned').textContent = `${d.total.toLocaleString('ru')} доменов · скан ${age < 1 ? 'меньше часа' : age + ' ч.'} назад · обновляется каждые 6 ч.`;
+  const ageMin = Math.floor((Date.now() / 1000 - d.scannedAt) / 60);
+  $('scanned').textContent = `${d.total.toLocaleString('ru')} доменов · каталог: ${ageMin < 60 ? ageMin + ' мин назад' : Math.floor(ageMin / 60) + ' ч. назад'} · аукционы: live`;
   render();
+  liveRefreshAuctions();
 }).catch(() => { $('scanned').textContent = 'не удалось загрузить данные'; });
 </script>
 </body>
