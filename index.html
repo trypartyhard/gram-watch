@@ -216,6 +216,32 @@ async function grmWalletOf(ownerRaw) {
   throw new Error('не смог получить GRM-кошелёк — проверь, что на кошельке есть GRM');
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function runGet(address, method, attempt = 0) {
+  const r = await fetch('https://toncenter.com/api/v2/runGetMethod', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address, method, stack: [] }),
+  });
+  if (r.status === 429 && attempt < 2) { await sleep(1300); return runGet(address, method, attempt + 1); }
+  const j = await r.json();
+  if (!j.ok || j.result.exit_code !== 0) throw new Error('runGetMethod failed');
+  return j.result.stack;
+}
+
+// живая проверка перед отправкой: данные каталога могут отставать до 6 часов
+async function checkStillExpired(address) {
+  const now = Math.floor(Date.now() / 1000);
+  const fill = parseInt((await runGet(address, 'get_last_fill_up_time'))[0][1], 16);
+  if (fill + 31622400 > now) return 'Домен уже занят: владелец продлил его или его только что купили на аукционе. Список обновится при следующем скане.';
+  await sleep(1100); // toncenter free tier: 1 rps
+  const end = parseInt((await runGet(address, 'get_auction_info'))[2][1], 16);
+  if (end > 0) return end > now
+    ? 'На этот домен уже идёт аукцион — кто-то успел раньше. Сделать ставку можно на dns.gramcoin.org.'
+    : 'Аукцион на этот домен уже прошёл и ждёт доставки победителю.';
+  return null;
+}
+
 async function confirmStart() {
   if (!pending) return;
   const err = $('sh-err'); err.textContent = '';
@@ -223,8 +249,13 @@ async function confirmStart() {
   const min = minStartGram(pending.name);
   if (!amt || amt < min) { err.textContent = `Минимум ${min.toLocaleString('ru')} GRM`; return; }
   if (!tcui.account) { closeSheet(); tcui.openModal(); return; }
-  const btn = $('sh-go'); btn.disabled = true; btn.textContent = 'Готовлю транзакцию…';
+  const btn = $('sh-go'); btn.disabled = true; btn.textContent = 'Проверяю домен…';
   try {
+    try {
+      const blocked = await checkStillExpired(pending.address);
+      if (blocked) { err.textContent = blocked; return; }
+    } catch (e) { /* проверка недоступна — не блокируем, контракт вернёт GRM сам */ }
+    btn.textContent = 'Готовлю транзакцию…';
     const { jw, balance } = await grmWalletOf(tcui.account.address);
     if (balance && balance < amt + FEE_GRM) { err.textContent = `Нужно ${(amt + FEE_GRM).toLocaleString('ru')} GRM (ставка + комиссия), на кошельке ${balance.toLocaleString('ru')}`; return; }
     const BN = TonWeb.utils.BN, Cell = TonWeb.boc.Cell;
