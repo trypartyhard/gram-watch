@@ -274,11 +274,13 @@ async function confirmStart() {
     const fwd = new Cell(); fwd.bits.writeUint(OPEN_OP, 32);
     const bidBody = jettonTransfer(BigInt(Math.round(amt * 1e9)), pending.address, FWD_TON, fwd);
     const feeBody = jettonTransfer(BigInt(FEE_GRM) * 1000000000n, FEE_WALLET, '0', null);
+    // TON Connect v3: messages[].address обязан быть в friendly-формате (raw 0:… отклоняется валидацией)
+    const jwFriendly = new TonWeb.utils.Address(jw).toString(true, true, true);
     await tcui.sendTransaction({
       validUntil: Math.floor(Date.now() / 1000) + 300,
       messages: [
-        { address: jw, amount: TOTAL_TON, payload: TonWeb.utils.bytesToBase64(await bidBody.toBoc(false)) },
-        { address: jw, amount: FEE_MSG_TON, payload: TonWeb.utils.bytesToBase64(await feeBody.toBoc(false)) },
+        { address: jwFriendly, amount: TOTAL_TON, payload: TonWeb.utils.bytesToBase64(await bidBody.toBoc(false)) },
+        { address: jwFriendly, amount: FEE_MSG_TON, payload: TonWeb.utils.bytesToBase64(await feeBody.toBoc(false)) },
       ],
     });
     closeSheet();
