@@ -84,11 +84,10 @@
 <div class="sheet" id="sheet">
   <h2 id="sh-title"></h2>
   <div class="note" id="sh-sub"></div>
-  <div class="amt"><input id="sh-amt" type="number" inputmode="numeric" min="0"><span>GRM</span></div>
-  <div class="note">Итого спишется: <b>ставка + 100 GRM</b> (комиссия сервиса) и <b>~1.4 TON</b>
-    (1.25 TON — залог аукциона, излишек вернётся). GRM-ставка уйдёт на контракт домена; если тебя перебьют — GRM вернутся.</div>
+  <div class="amt"><input id="sh-amt" type="number" inputmode="decimal" step="any" min="0"><span>GRM</span></div>
+  <div class="note" id="sh-note"></div>
   <div class="err" id="sh-err"></div>
-  <button class="go" id="sh-go" onclick="confirmStart()">Запустить</button>
+  <button class="go" id="sh-go" onclick="sheetConfirm()">Запустить</button>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -167,6 +166,8 @@ function render() {
     } else if (tab === 'auctions') {
       badge = `<span class="badge d-acc" data-end="${r.end}"></span>`;
       meta = `ставка <b>${r.bid.toLocaleString('ru')} GRM</b> · лидер <a href="https://tonviewer.com/${r.bidder}" target="_blank">${short(r.bidder)}</a> · до ${new Date(r.end * 1000).toLocaleString('ru')}`;
+      action = `<div class="actions"><div class="price">перебить от <b>${nextBidGram(r.bid).toLocaleString('ru')} GRM</b></div>
+        <button class="go" onclick="openBidSheet(${i})">Сделать ставку</button></div>`;
     } else {
       badge = `<span class="badge d-grn">ждёт доставки</span>`;
       meta = `аукцион кончился ${fmt(r.end)} · ставка ${r.bid.toLocaleString('ru')} GRM · победитель <a href="https://tonviewer.com/${r.bidder}" target="_blank">${short(r.bidder)}</a>`;
@@ -202,17 +203,61 @@ function setTab(k) { tab = k; shown = 120; render(); window.scrollTo(0, 0); }
 $('q').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); shown = 120; render(); });
 $('sort').addEventListener('change', (e) => { sortMode = e.target.value; shown = 120; render(); });
 
-// ---------- запуск аукциона ----------
+// ---------- шторка: запуск аукциона / ставка ----------
+let sheetMode = 'start', bidCtx = null;
+const FEE_NOTE = 'Итого спишется: <b>ставка + 100 GRM</b> (комиссия сервиса) и <b>~1.4 TON</b> (1.25 TON — залог, излишек вернётся). Если тебя перебьют — GRM-ставка вернётся на кошелёк.';
+
+function nextBidNano(bidGram) { return (BigInt(Math.round(bidGram * 1e9)) * 105n + 99n) / 100n; }
+function nextBidGram(bidGram) { return Math.ceil(Number(nextBidNano(bidGram)) / 1e6) / 1000; }
+
+function showSheet() {
+  $('sh-err').textContent = ''; $('sh-go').disabled = false;
+  $('ovl').style.display = 'block'; $('sheet').style.display = 'block';
+}
+function closeSheet() { $('ovl').style.display = 'none'; $('sheet').style.display = 'none'; pending = null; bidCtx = null; }
+function sheetConfirm() { return sheetMode === 'bid' ? confirmBid() : confirmStart(); }
+
 function openSheet(i) {
+  sheetMode = 'start';
   pending = window._rows[i];
   const min = minStartGram(pending.name);
   $('sh-title').textContent = pending.name + '.gram';
   $('sh-sub').textContent = `Стартовая ставка — минимум ${min.toLocaleString('ru')} GRM. Аукцион идёт 7 дней, перебитие +5%.`;
+  $('sh-note').innerHTML = FEE_NOTE;
   $('sh-amt').value = min; $('sh-amt').min = min;
-  $('sh-err').textContent = '';
-  $('ovl').style.display = 'block'; $('sheet').style.display = 'block';
+  $('sh-go').textContent = 'Запустить';
+  showSheet();
 }
-function closeSheet() { $('ovl').style.display = 'none'; $('sheet').style.display = 'none'; pending = null; }
+
+async function openBidSheet(i) {
+  sheetMode = 'bid';
+  pending = window._rows[i];
+  bidCtx = null;
+  $('sh-title').textContent = pending.name + '.gram';
+  $('sh-sub').textContent = 'Проверяю текущую ставку…';
+  $('sh-note').innerHTML = FEE_NOTE;
+  $('sh-amt').value = nextBidGram(pending.bid);
+  $('sh-go').textContent = 'Перебить';
+  showSheet();
+  try {
+    // живое состояние аукциона: каталог мог отстать, кто-то мог перебить только что
+    const j = await (await fetch(`https://toncenter.com/api/v3/accountStates?address=${pending.address}&include_boc=true`)).json();
+    const p = parseItemLive(j.accounts[0].data_boc);
+    const now = Math.floor(Date.now() / 1000);
+    if (!p.auction) { $('sh-sub').textContent = 'Аукцион уже завершён — домен доставлен победителю или продлён.'; $('sh-go').disabled = true; return; }
+    if (p.auction.end < now) { $('sh-sub').textContent = 'Аукцион завершён и ждёт доставки победителю — ставки больше не принимаются.'; $('sh-go').disabled = true; return; }
+    bidCtx = p.auction;
+    const minNext = nextBidGram(p.auction.bid);
+    $('sh-sub').innerHTML = `Текущая ставка: <b>${p.auction.bid.toLocaleString('ru')} GRM</b> — ` +
+      (p.auction.bidder ? `<a href="https://tonviewer.com/${p.auction.bidder}" target="_blank">${short(p.auction.bidder)}</a>` : 'аноним') +
+      `. Перебить: от <b>${minNext.toLocaleString('ru')} GRM</b> (+5%).`;
+    $('sh-amt').value = minNext; $('sh-amt').min = minNext;
+  } catch (e) {
+    // сеть недоступна — работаем по данным каталога, контракт всё равно проверит сам
+    bidCtx = { bid: pending.bid, end: pending.end, bidder: pending.bidder };
+    $('sh-sub').textContent = `Текущая ставка (по каталогу): ${pending.bid.toLocaleString('ru')} GRM. Перебить: от ${nextBidGram(pending.bid).toLocaleString('ru')} GRM.`;
+  }
+}
 
 async function grmWalletOf(ownerRaw) {
   // 1) toncenter — доступен из РФ (tonapi у части операторов заблокирован)
@@ -260,6 +305,66 @@ async function checkStillExpired(address) {
   return null;
 }
 
+function buildJettonTransfer(grmNano, toAddr, fwdPayloadCell) {
+  const BN = TonWeb.utils.BN;
+  const c = new TonWeb.boc.Cell();
+  c.bits.writeUint(JETTON_TRANSFER, 32);
+  c.bits.writeUint(0, 64);
+  c.bits.writeCoins(new BN(grmNano.toString()));
+  c.bits.writeAddress(new TonWeb.utils.Address(toAddr));
+  c.bits.writeAddress(new TonWeb.utils.Address(tcui.account.address));
+  c.bits.writeBit(0);
+  c.bits.writeCoins(new BN(fwdPayloadCell ? FWD_TON : '0'));
+  if (fwdPayloadCell) { c.bits.writeBit(1); c.refs.push(fwdPayloadCell); } else { c.bits.writeBit(0); }
+  return c;
+}
+
+async function submitWithFee(jw, mainBody) {
+  const feeBody = buildJettonTransfer(BigInt(FEE_GRM) * 1000000000n, FEE_WALLET, null);
+  // TON Connect v3: messages[].address обязан быть в friendly-формате (raw 0:… отклоняется валидацией)
+  const jwFriendly = new TonWeb.utils.Address(jw).toString(true, true, true);
+  await tcui.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 300,
+    messages: [
+      { address: jwFriendly, amount: TOTAL_TON, payload: TonWeb.utils.bytesToBase64(await mainBody.toBoc(false)) },
+      { address: jwFriendly, amount: FEE_MSG_TON, payload: TonWeb.utils.bytesToBase64(await feeBody.toBoc(false)) },
+    ],
+  });
+}
+
+async function confirmBid() {
+  if (!pending || !bidCtx) return;
+  const err = $('sh-err'); err.textContent = '';
+  const amt = Number($('sh-amt').value);
+  const amtNano = BigInt(Math.round((amt || 0) * 1e9));
+  if (!amt || amtNano < nextBidNano(bidCtx.bid)) { err.textContent = `Минимум ${nextBidGram(bidCtx.bid).toLocaleString('ru')} GRM (+5% к текущей)`; return; }
+  if (!tcui.account) { closeSheet(); tcui.openModal(); return; }
+  const btn = $('sh-go'); btn.disabled = true; btn.textContent = 'Готовлю транзакцию…';
+  try {
+    const { jw, balance } = await grmWalletOf(tcui.account.address);
+    if (balance && balance < amt + FEE_GRM) { err.textContent = `Нужно ${(amt + FEE_GRM).toLocaleString('ru')} GRM (ставка + комиссия), на кошельке ${balance.toLocaleString('ru')}`; return; }
+    // ставка = GRM на контракт домена, forward-комментарий = имя домена (как на dns.gramcoin.org)
+    const fwd = new TonWeb.boc.Cell();
+    fwd.bits.writeUint(0, 32);
+    fwd.bits.writeString(pending.name);
+    const bidBody = buildJettonTransfer(amtNano, pending.address, fwd);
+    await submitWithFee(jw, bidBody);
+    const row = D.auctions.find((r) => r.address === pending.address);
+    if (row) {
+      row.bid = amt; row.bidder = tcui.account.address;
+      const now = Math.floor(Date.now() / 1000);
+      if (row.end - now < 3600) row.end = now + 3600; // антиснайп-продление
+    }
+    setTimeout(liveRefreshAuctions, 20000);
+    closeSheet(); render();
+    toast('✅ Ставка отправлена! Обновится после подтверждения сети (~1 мин)', 5000);
+  } catch (e) {
+    err.textContent = e && e.message && e.message.includes('User') ? 'Отменено в кошельке' : 'Ошибка: ' + (e.message || e);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Перебить';
+  }
+}
+
 async function confirmStart() {
   if (!pending) return;
   const err = $('sh-err'); err.textContent = '';
@@ -276,31 +381,9 @@ async function confirmStart() {
     btn.textContent = 'Готовлю транзакцию…';
     const { jw, balance } = await grmWalletOf(tcui.account.address);
     if (balance && balance < amt + FEE_GRM) { err.textContent = `Нужно ${(amt + FEE_GRM).toLocaleString('ru')} GRM (ставка + комиссия), на кошельке ${balance.toLocaleString('ru')}`; return; }
-    const BN = TonWeb.utils.BN, Cell = TonWeb.boc.Cell;
-    function jettonTransfer(grmNano, toAddr, fwdTon, fwdPayloadCell) {
-      const c = new Cell();
-      c.bits.writeUint(JETTON_TRANSFER, 32);
-      c.bits.writeUint(0, 64);
-      c.bits.writeCoins(new BN(grmNano.toString()));
-      c.bits.writeAddress(new TonWeb.utils.Address(toAddr));
-      c.bits.writeAddress(new TonWeb.utils.Address(tcui.account.address));
-      c.bits.writeBit(0);
-      c.bits.writeCoins(new BN(fwdTon));
-      if (fwdPayloadCell) { c.bits.writeBit(1); c.refs.push(fwdPayloadCell); } else { c.bits.writeBit(0); }
-      return c;
-    }
-    const fwd = new Cell(); fwd.bits.writeUint(OPEN_OP, 32);
-    const bidBody = jettonTransfer(BigInt(Math.round(amt * 1e9)), pending.address, FWD_TON, fwd);
-    const feeBody = jettonTransfer(BigInt(FEE_GRM) * 1000000000n, FEE_WALLET, '0', null);
-    // TON Connect v3: messages[].address обязан быть в friendly-формате (raw 0:… отклоняется валидацией)
-    const jwFriendly = new TonWeb.utils.Address(jw).toString(true, true, true);
-    await tcui.sendTransaction({
-      validUntil: Math.floor(Date.now() / 1000) + 300,
-      messages: [
-        { address: jwFriendly, amount: TOTAL_TON, payload: TonWeb.utils.bytesToBase64(await bidBody.toBoc(false)) },
-        { address: jwFriendly, amount: FEE_MSG_TON, payload: TonWeb.utils.bytesToBase64(await feeBody.toBoc(false)) },
-      ],
-    });
+    const fwd = new TonWeb.boc.Cell(); fwd.bits.writeUint(OPEN_OP, 32);
+    const bidBody = buildJettonTransfer(BigInt(Math.round(amt * 1e9)), pending.address, fwd);
+    await submitWithFee(jw, bidBody);
     // оптимистично: домен сразу переезжает из «Истёкших» в «Аукционы»
     const idx = D.expired.indexOf(pending);
     if (idx >= 0) D.expired.splice(idx, 1);
@@ -334,9 +417,16 @@ function parseItemLive(b64) {
   let auction = null;
   if (hasAuction) {
     const a = cellReader(cell.refs[2]);
-    a.skipAddr();
+    let bidder = null;
+    if (a.u(2) === 2) {
+      a.u(1); // anycast none
+      const wc = a.u(8);
+      let hash = '';
+      for (let i = 0; i < 32; i++) hash += a.u(8).toString(16).padStart(2, '0');
+      bidder = (wc === 255 ? -1 : wc) + ':' + hash;
+    }
     const bid = a.u(a.u(4) * 8) / 1e9;
-    auction = { bid, end: a.u(64) };
+    auction = { bid, end: a.u(64), bidder };
   }
   return { hasOwner, lastFillUp, auction };
 }
