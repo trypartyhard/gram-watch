@@ -197,13 +197,23 @@ function openSheet(i) {
 function closeSheet() { $('ovl').style.display = 'none'; $('sheet').style.display = 'none'; pending = null; }
 
 async function grmWalletOf(ownerRaw) {
+  // 1) toncenter — доступен из РФ (tonapi у части операторов заблокирован)
+  try {
+    const j = await (await fetch(`https://toncenter.com/api/v3/jetton/wallets?owner_address=${ownerRaw}&jetton_address=${GRM_MASTER}`)).json();
+    const w = j.jetton_wallets && j.jetton_wallets[0];
+    if (w && w.address) return { jw: w.address.toLowerCase(), balance: Number(w.balance) / 1e9 };
+  } catch (e) {}
+  // 2) tonapi: баланс юзера
   try {
     const j = await (await fetch(`https://tonapi.io/v2/accounts/${ownerRaw}/jettons/${GRM_MASTER}`)).json();
     if (j.wallet_address && j.wallet_address.address) return { jw: j.wallet_address.address, balance: Number(j.balance) / 1e9 };
   } catch (e) {}
-  const m = await (await fetch(`https://tonapi.io/v2/blockchain/accounts/${GRM_MASTER}/methods/get_wallet_address?args=${encodeURIComponent(ownerRaw)}`)).json();
-  if (m.success && m.decoded && m.decoded.jetton_wallet_address) return { jw: m.decoded.jetton_wallet_address, balance: 0 };
-  throw new Error('не смог получить GRM-кошелёк');
+  // 3) tonapi: расчёт адреса через get-метод мастера
+  try {
+    const m = await (await fetch(`https://tonapi.io/v2/blockchain/accounts/${GRM_MASTER}/methods/get_wallet_address?args=${encodeURIComponent(ownerRaw)}`)).json();
+    if (m.success && m.decoded && m.decoded.jetton_wallet_address) return { jw: m.decoded.jetton_wallet_address, balance: 0 };
+  } catch (e) {}
+  throw new Error('не смог получить GRM-кошелёк — проверь, что на кошельке есть GRM');
 }
 
 async function confirmStart() {
