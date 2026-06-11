@@ -88,7 +88,7 @@
   <div class="note">Итого спишется: <b>ставка + 100 GRM</b> (комиссия сервиса) и <b>~1.4 TON</b>
     (1.25 TON — залог аукциона, излишек вернётся). GRM-ставка уйдёт на контракт домена; если тебя перебьют — GRM вернутся.</div>
   <div class="err" id="sh-err"></div>
-  <button class="go" id="sh-go" onclick="confirmStart()">Отправить в кошелёк</button>
+  <button class="go" id="sh-go" onclick="confirmStart()">Запустить</button>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -255,7 +255,7 @@ async function confirmStart() {
   } catch (e) {
     err.textContent = e && e.message && e.message.includes('User') ? 'Отменено в кошельке' : 'Ошибка: ' + (e.message || e);
   } finally {
-    btn.disabled = false; btn.textContent = 'Отправить в кошелёк';
+    btn.disabled = false; btn.textContent = 'Запустить';
   }
 }
 
