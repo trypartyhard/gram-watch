@@ -251,6 +251,11 @@ async function openBidSheet(i) {
     $('sh-sub').innerHTML = `Текущая ставка: <b>${p.auction.bid.toLocaleString('ru')} GRM</b> — ` +
       (p.auction.bidder ? `<a href="https://tonviewer.com/${p.auction.bidder}" target="_blank">${short(p.auction.bidder)}</a>` : 'аноним') +
       `. Перебить: от <b>${minNext.toLocaleString('ru')} GRM</b> (+5%).`;
+    const left = p.auction.end - now;
+    if (left < 600) {
+      $('sh-sub').innerHTML += `<br>⏱ Финал (${Math.max(1, Math.floor(left / 60))} мин): ставка продлит аукцион на +1 час с момента ставки.` +
+        (left < 120 ? ' Если транзакция не успеет до конца — GRM просто вернутся.' : '');
+    }
     $('sh-amt').value = minNext; $('sh-amt').min = minNext;
   } catch (e) {
     // сеть недоступна — работаем по данным каталога, контракт всё равно проверит сам
