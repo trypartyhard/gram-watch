@@ -423,6 +423,11 @@ function parseItemLive(b64) {
   const hasOwner = r.skipAddr() === 2;
   const hasAuction = r.u(1) === 1;
   const lastFillUp = r.u(64);
+  let name = '';
+  try {
+    const n = cellReader(cell.refs[1]);
+    for (let i = 0; i < cell.refs[1].bits.length >> 3; i++) name += String.fromCharCode(n.u(8));
+  } catch (e) {}
   let auction = null;
   if (hasAuction) {
     const a = cellReader(cell.refs[2]);
@@ -437,7 +442,7 @@ function parseItemLive(b64) {
     const bid = a.u(a.u(4) * 8) / 1e9;
     auction = { bid, end: a.u(64), bidder };
   }
-  return { hasOwner, lastFillUp, auction };
+  return { hasOwner, lastFillUp, auction, name };
 }
 
 let liveBusy = false;
@@ -451,7 +456,7 @@ async function liveRefreshAuctions() {
     for (let i = 0; i < targets.length; i += 100) {
       const chunk = targets.slice(i, i + 100);
       try {
-        const j = await (await fetch(`https://toncenter.com/api/v3/accountStates?address=${chunk.map((t) => t.address).join(',')}&include_boc=true&limit=100`)).json();
+        const j = await fetchJson429(`https://toncenter.com/api/v3/accountStates?address=${chunk.map((t) => t.address).join(',')}&include_boc=true&limit=100`);
         for (const acc of j.accounts || []) states[acc.address.toLowerCase()] = acc;
       } catch (e) {}
       if (i + 100 < targets.length) await sleep(1200);
@@ -484,13 +489,60 @@ async function liveRefreshAuctions() {
 }
 setInterval(liveRefreshAuctions, 90000);
 
+// новые минты: деплой новых доменов идёт через контракт коллекции —
+// смотрим её свежие транзакции и подхватываем часовые аукционы без ожидания крона
+const COLLECTION = 'EQAic3zPce496ukFDhbco28FVsKKl2WUX_iJwaL87CBxSiLQ';
+const rawOf = (friendly) => new TonWeb.utils.Address(friendly).toString(false).toLowerCase();
+async function fetchJson429(url, attempt = 0) {
+  const r = await fetch(url);
+  if ((r.status === 429 || r.status >= 500) && attempt < 2) { await sleep(1500); return fetchJson429(url, attempt + 1); }
+  return r.json();
+}
+async function checkNewMints() {
+  if (!D) return;
+  try {
+    const j = await fetchJson429(`https://toncenter.com/api/v3/transactions?account=${COLLECTION}&limit=30&sort=desc`);
+    const horizon = Math.floor(Date.now() / 1000) - 2 * 3600;
+    const known = new Set([...D.auctions, ...D.stuck].map((t) => rawOf(t.address)));
+    const cand = [];
+    for (const tx of j.transactions || []) {
+      if ((tx.now || 0) < horizon) continue;
+      for (const m of tx.out_msgs || []) {
+        const dst = m.destination && m.destination.toLowerCase();
+        if (dst && dst.includes(':') && !known.has(dst) && !cand.includes(dst)) cand.push(dst);
+      }
+    }
+    if (!cand.length) return;
+    await sleep(1200);
+    const js = await fetchJson429(`https://toncenter.com/api/v3/accountStates?address=${cand.slice(0, 100).join(',')}&include_boc=true&limit=100`);
+    const now = Math.floor(Date.now() / 1000);
+    let added = 0;
+    for (const acc of js.accounts || []) {
+      if (acc.status !== 'active' || !acc.data_boc) continue;
+      let p;
+      try { p = parseItemLive(acc.data_boc); } catch (e) { continue; }
+      if (!p.auction || !p.name || p.hasOwner) continue;
+      const friendly = new TonWeb.utils.Address(acc.address).toString(true, true, true);
+      const rec = { name: p.name, address: friendly, owner: null, lastFillUp: p.lastFillUp,
+                    expiry: p.lastFillUp + 31622400, bid: p.auction.bid, bidder: p.auction.bidder, end: p.auction.end };
+      (p.auction.end > now ? D.auctions : D.stuck).push(rec);
+      added++;
+    }
+    if (added) {
+      D.auctions.sort((a, b) => a.end - b.end);
+      if (tab === 'auctions' || tab === 'stuck') render();
+    }
+  } catch (e) {}
+}
+setInterval(checkNewMints, 90000);
+
 // ---------- данные ----------
 fetch('data.json?t=' + Math.floor(Date.now() / 600000)).then((r) => r.json()).then((d) => {
   D = d;
   const ageMin = Math.floor((Date.now() / 1000 - d.scannedAt) / 60);
   $('scanned').textContent = `${d.total.toLocaleString('ru')} доменов · каталог: ${ageMin < 60 ? ageMin + ' мин назад' : Math.floor(ageMin / 60) + ' ч. назад'} · аукционы: live`;
   render();
-  liveRefreshAuctions();
+  liveRefreshAuctions().then(() => checkNewMints());
 }).catch(() => { $('scanned').textContent = 'не удалось загрузить данные'; });
 </script>
 </body>
