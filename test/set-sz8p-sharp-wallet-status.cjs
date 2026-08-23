@@ -37,7 +37,11 @@ class MockAddress {
     this.address = address;
   }
 
-  toString() {
+  toString(isUserFriendly = false) {
+    if (!isUserFriendly && (this.address === '0:46318bcd44755930daaf537cc5613311337b2f73f29838e05b754ac10bf02819'
+        || this.address === 'UQBGMYvNRHVZMNqvU3zFYTMRM3svc_KYOOBbdUrBC_AoGdmk')) {
+      return '0:46318bcd44755930daaf537cc5613311337b2f73f29838e05b754ac10bf02819';
+    }
     return this.address === '0:46318bcd44755930daaf537cc5613311337b2f73f29838e05b754ac10bf02819'
       ? 'EQBGMYvNRHVZMNqvU3zFYTMRM3svc_KYOOBbdUrBC_AoGYRh'
       : this.address;
@@ -66,10 +70,10 @@ async function main() {
   }
   tonConnect.emit({
     account: {
-      address: '0:46318bcd44755930daaf537cc5613311337b2f73f29838e05b754ac10bf02819',
+      address: 'UQBGMYvNRHVZMNqvU3zFYTMRM3svc_KYOOBbdUrBC_AoGdmk',
     },
   });
-  assert.equal(elements.send.disabled, false, 'owner wallet must enable the send button');
+  assert.equal(elements.send.disabled, false, 'non-bounceable owner address must enable the send button');
   assert.match(elements.status.textContent, /Можно подписывать/);
   console.log('PASS: owner Wallet object enables the send button');
 }

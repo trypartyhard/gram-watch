@@ -41,7 +41,8 @@ code{color:#fff;background:#000;padding:2px 5px;border-radius:4px}
 </section></main>
 <script>
 const ITEM = 'EQAdOWKXM-kCj_Q8ew1gEfbv7qqmuZ26JpLcLPjUZw1fRF7m';
-const OWNER = 'EQBGMYvNRHVZMNqvU3zFYTMRM3svc_KYOOBbdUrBC_AoGYRh';
+const OWNER = 'UQBGMYvNRHVZMNqvU3zFYTMRM3svc_KYOOBbdUrBC_AoGdmk';
+const OWNER_RAW = '0:46318bcd44755930daaf537cc5613311337b2f73f29838e05b754ac10bf02819';
 const PAYLOAD_URL = 'assets/sz8p-sharp-512-edit-content.boc';
 const PAYLOAD_SHA256 = 'a2554dd34e39c55bc28cbd8870508a154b9ec34bb09fb08068fd1cfb89c3bcbf';
 let payload = null;
@@ -54,8 +55,8 @@ const tcui = new TON_CONNECT_UI.TonConnectUI({
 const send = document.getElementById('send');
 const status = document.getElementById('status');
 
-function friendly(address) {
-  return new TonWeb.utils.Address(address).toString(true, true, true);
+function raw(address) {
+  return new TonWeb.utils.Address(address).toString(false);
 }
 
 function bytesToBase64(bytes) {
@@ -100,7 +101,7 @@ async function loadPayload() {
 }
 
 tcui.onStatusChange((wallet) => {
-  connectedOwner = Boolean(wallet?.account?.address && friendly(wallet.account.address) === OWNER);
+  connectedOwner = Boolean(wallet?.account?.address && raw(wallet.account.address) === OWNER_RAW);
   refresh();
 });
 
