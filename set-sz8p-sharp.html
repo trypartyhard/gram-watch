@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Чёткая обложка sz8p.gram</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<link rel="icon" href="icon.png">
+<script src="https://unpkg.com/@tonconnect/ui@3.0.0/dist/tonconnect-ui.min.js"
+        integrity="sha384-KZJz/e4LItU3cVpBbZC7OpSw0USa3d7FGIfLGlXN/RXZAcIypYXvQ0Qb8I9J222K" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/tonweb@0.0.66/dist/tonweb.js"
+        integrity="sha384-KZ9iM9JqTC8JCLaVPv/PkC5yCO2FJ4qykQ6jhXY565xW86rtPEZgqcLfEWMtqQmT" crossorigin="anonymous"></script>
+<style>
+:root{color-scheme:dark;--bg:#090909;--card:#171717;--line:#343434;--red:#d82323;--text:#f3eee5;--dim:#aaa39a;--warn:#ffcc66}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 10%,#401010 0,transparent 36%),var(--bg);color:var(--text);font:16px/1.45 system-ui,sans-serif}
+main{width:min(520px,100%);margin:auto;padding:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 20px 70px #0008}
+img{display:block;width:100%;height:auto;border-radius:12px;border:1px solid #ffffff24}h1{font-size:23px;margin:16px 0 5px}.sub{color:var(--dim);font-size:14px}
+.details,.warning{margin:16px 0;padding:12px;background:#0c0c0c;border-radius:4px 10px 10px 4px;font-size:14px}.details{border-left:4px solid var(--red)}.warning{border-left:4px solid var(--warn);color:#ded5c6}
+#tc-btn{margin:14px 0}.action{width:100%;border:0;border-radius:12px;padding:14px;background:var(--red);color:white;font-size:16px;font-weight:800;cursor:pointer}
+.action:disabled{opacity:.45;cursor:not-allowed}.status{min-height:48px;margin-top:12px;color:var(--dim);font-size:14px;word-break:break-word}.ok{color:#7ee787}.err{color:#ff7b72}
+code{color:#fff;background:#000;padding:2px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<main><section class="card">
+<img src="assets/sz8p-sharp-512.webp" width="512" height="512" alt="ANARCHY PROTEST — sz8p.gram">
+<h1>Чёткая обложка sz8p.gram</h1>
+<div class="sub">WebP 512×512 вместо размытой версии 96×96.</div>
+<div class="details">
+  Адресат: NFT-контракт <code>sz8p.gram</code><br>
+  В контракт: <strong>0,01 TON</strong><br>
+  Изменяется только <code>image_data</code> обложки.<br>
+  Владение и DNS-записи не меняются.
+</div>
+<div class="warning">
+  Файл записывается ончейн, поэтому комиссия сети заметная — ориентировочно около <strong>0,21 TON</strong>. Точную сумму перед подписью покажет Tonkeeper.
+</div>
+<div id="tc-btn"></div>
+<button class="action" id="send" disabled>Установить чёткую обложку</button>
+<div class="status" id="status">Загружаю проверенную транзакцию…</div>
+</section></main>
+<script>
+const ITEM = 'EQAdOWKXM-kCj_Q8ew1gEfbv7qqmuZ26JpLcLPjUZw1fRF7m';
+const OWNER = 'EQBGMYvNRHVZMNqvU3zFYTMRM3svc_KYOOBbdUrBC_AoGYRh';
+const PAYLOAD_URL = 'assets/sz8p-sharp-512-edit-content.boc';
+const PAYLOAD_SHA256 = 'a2554dd34e39c55bc28cbd8870508a154b9ec34bb09fb08068fd1cfb89c3bcbf';
+let payload = null;
+let connectedOwner = false;
+
+const tcui = new TON_CONNECT_UI.TonConnectUI({
+  manifestUrl: 'https://trypartyhard.github.io/gram-watch/tonconnect-manifest.json',
+  buttonRootId: 'tc-btn',
+});
+const send = document.getElementById('send');
+const status = document.getElementById('status');
+
+function friendly(address) {
+  return new TonWeb.utils.Address(address).toString(true, true, true);
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  }
+  return btoa(binary);
+}
+
+function refresh() {
+  send.disabled = !(payload && connectedOwner);
+  if (!payload) {
+    status.className = 'status';
+    status.textContent = 'Загружаю проверенную транзакцию…';
+  } else if (!tcui.account) {
+    status.className = 'status';
+    status.textContent = 'Транзакция проверена. Подключите кошелёк-владелец.';
+  } else if (!connectedOwner) {
+    status.className = 'status err';
+    status.textContent = 'Подключён другой кошелёк. Нужен владелец: ' + OWNER;
+  } else {
+    status.className = 'status ok';
+    status.textContent = 'Кошелёк-владелец и транзакция проверены. Можно подписывать.';
+  }
+}
+
+async function loadPayload() {
+  try {
+    const response = await fetch(PAYLOAD_URL, {cache: 'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const hex = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+    if (hex !== PAYLOAD_SHA256) throw new Error('контрольная сумма не совпала');
+    payload = bytesToBase64(bytes);
+    refresh();
+  } catch (error) {
+    status.className = 'status err';
+    status.textContent = 'Не удалось загрузить транзакцию: ' + (error?.message || error);
+  }
+}
+
+tcui.onStatusChange((account) => {
+  connectedOwner = Boolean(account && friendly(account.address) === OWNER);
+  refresh();
+});
+
+send.addEventListener('click', async () => {
+  if (!payload || !connectedOwner) return;
+  send.disabled = true;
+  status.className = 'status';
+  status.textContent = 'Откройте Tonkeeper и проверьте адрес, сумму и комиссию…';
+  try {
+    await tcui.sendTransaction({
+      validUntil: Math.floor(Date.now() / 1000) + 600,
+      messages: [{ address: ITEM, amount: '10000000', payload }],
+    });
+    status.className = 'status ok';
+    status.textContent = 'Подпись отправлена. Дождитесь подтверждения сети.';
+  } catch (error) {
+    send.disabled = false;
+    status.className = 'status err';
+    status.textContent = /reject|cancel|user/i.test(error?.message || '')
+      ? 'Подпись отменена в кошельке.'
+      : 'Ошибка: ' + (error?.message || error);
+  }
+});
+
+loadPayload();
+</script>
+</body>
+</html>
