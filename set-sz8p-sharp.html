@@ -99,8 +99,8 @@ async function loadPayload() {
   }
 }
 
-tcui.onStatusChange((account) => {
-  connectedOwner = Boolean(account && friendly(account.address) === OWNER);
+tcui.onStatusChange((wallet) => {
+  connectedOwner = Boolean(wallet?.account?.address && friendly(wallet.account.address) === OWNER);
   refresh();
 });
 
