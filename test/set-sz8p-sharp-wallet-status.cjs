@@ -10,10 +10,16 @@ const script = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
 assert.ok(script, 'inline transaction script must exist');
 
 const elements = {
-  send: { disabled: true, addEventListener() {} },
+  send: {
+    disabled: true,
+    addEventListener(type, listener) {
+      if (type === 'click') this.click = listener;
+    },
+  },
   status: { className: '', textContent: '' },
 };
 let tonConnect;
+let sentTransaction;
 
 class MockTonConnectUI {
   constructor() {
@@ -28,6 +34,11 @@ class MockTonConnectUI {
   emit(wallet) {
     this.account = wallet?.account || null;
     this.statusCallback(wallet);
+  }
+
+  async sendTransaction(transaction) {
+    sentTransaction = transaction;
+    return { boc: 'signed' };
   }
 }
 
@@ -75,7 +86,13 @@ async function main() {
   });
   assert.equal(elements.send.disabled, false, 'non-bounceable owner address must enable the send button');
   assert.match(elements.status.textContent, /Можно подписывать/);
-  console.log('PASS: owner Wallet object enables the send button');
+  await elements.send.click();
+  assert.ok(sentTransaction, 'clicking the enabled button must request a transaction');
+  assert.ok(
+    BigInt(sentTransaction.messages[0].amount) >= 50_000_000n,
+    'sharp 512px payload must attach at least 0.05 TON so Tonkeeper emulation can forward it',
+  );
+  console.log('PASS: owner can send a sufficiently funded sharp-image transaction');
 }
 
 main().catch((error) => {

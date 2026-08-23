@@ -27,7 +27,7 @@ code{color:#fff;background:#000;padding:2px 5px;border-radius:4px}
 <div class="sub">WebP 512×512 вместо размытой версии 96×96.</div>
 <div class="details">
   Адресат: NFT-контракт <code>sz8p.gram</code><br>
-  В контракт: <strong>0,01 TON</strong><br>
+  В контракт: <strong>0,06 TON</strong><br>
   Изменяется только <code>image_data</code> обложки.<br>
   Владение и DNS-записи не меняются.
 </div>
@@ -113,7 +113,7 @@ send.addEventListener('click', async () => {
   try {
     await tcui.sendTransaction({
       validUntil: Math.floor(Date.now() / 1000) + 600,
-      messages: [{ address: ITEM, amount: '10000000', payload }],
+      messages: [{ address: ITEM, amount: '60000000', payload }],
     });
     status.className = 'status ok';
     status.textContent = 'Подпись отправлена. Дождитесь подтверждения сети.';
