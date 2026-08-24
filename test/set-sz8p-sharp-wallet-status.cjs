@@ -92,7 +92,23 @@ async function main() {
     BigInt(sentTransaction.messages[0].amount) >= 50_000_000n,
     'sharp 512px payload must attach at least 0.05 TON so Tonkeeper emulation can forward it',
   );
-  console.log('PASS: owner can send a sufficiently funded sharp-image transaction');
+  const rpcPayload = JSON.stringify({
+    from: '0:46318bcd44755930daaf537cc5613311337b2f73f29838e05b754ac10bf02819',
+    network: '-239',
+    valid_until: sentTransaction.validUntil,
+    messages: sentTransaction.messages,
+  });
+  const rpcRequest = JSON.stringify({
+    method: 'sendTransaction',
+    params: [rpcPayload],
+    id: '2905',
+  });
+  const encryptedRequestBytes = Buffer.byteLength(rpcRequest) + 40;
+  assert.ok(
+    encryptedRequestBytes <= 65_536,
+    `encrypted TonConnect request must fit Tonkeeper bridge (got ${encryptedRequestBytes} bytes)`,
+  );
+  console.log('PASS: owner transaction fits Tonkeeper bridge and has enough TON');
 }
 
 main().catch((error) => {
